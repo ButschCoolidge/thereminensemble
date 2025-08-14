@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Layer Webcam Theremin</title>
+    
+    <!-- Tailwind CSS für das Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts für eine moderne Schriftart -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Tone.js für die Klangerzeugung -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    
+    <!-- MediaPipe für die Hand-Erkennung -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #1a1a1a;
+            overflow-y: auto; /* ERMÖGLICHT DAS SCROLLEN */
+        }
+        .hidden-video { display: none; }
+        .loader { border: 8px solid #f3f3f3; border-top: 8px solid #60a5fa; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .pitch-antenna { width: 12px; height: 150px; background: linear-gradient(to top, #d1d5db, #ffffff); border-radius: 6px; box-shadow: 0 0 10px rgba(255, 255, 255, 0.3); }
+        .volume-bar, .pitch-bar { transition: all 0.1s linear; }
+        .rotary-knob { width: 72px; height: 72px; border-radius: 50%; background: linear-gradient(145deg, #2c2c2c, #1e1e1e); box-shadow: 5px 5px 10px #171717, -5px -5px 10px #2d2d2d; cursor: pointer; transition: transform 0.3s ease-in-out; position: relative; }
+        .rotary-knob:active { background: #1e1e1e; box-shadow: inset 5px 5px 10px #171717, inset -5px -5px 10px #2d2d2d; }
+        .knob-indicator { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 4px; height: 16px; border-radius: 2px; }
+        .switch { width: 50px; height: 28px; background-color: #374151; border-radius: 9999px; padding: 4px; cursor: pointer; transition: background-color 0.2s ease-in-out; }
+        .switch-handle { width: 20px; height: 20px; background-color: white; border-radius: 9999px; transition: transform 0.2s ease-in-out; }
+    </style>
+</head>
+<body class="text-white flex flex-col items-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl mx-auto text-center mb-4">
+        <h1 class="text-4xl md:text-5xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">Theremin Ensemble</h1>
+        <p class="text-gray-400">Schichten Sie Klänge mit Ihren Händen.</p>
+    </div>
+
+    <div id="theremin-container" class="w-full space-y-6"></div>
+    
+    <div class="mt-6 text-center">
+        <p id="note-display" class="text-6xl font-mono font-bold text-gray-400">-</p>
+        <p id="hz-display" class="text-xl font-mono text-gray-500">0 Hz</p>
+    </div>
+
+    <div class="my-8">
+        <button id="add-theremin-button" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg text-xl shadow-lg transition-transform transform hover:scale-105">+ Add Theremin</button>
+    </div>
+
+    <video class="hidden-video" id="input_video"></video>
+
+    <div id="overlay" class="fixed inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-20">
+        <div id="loading-indicator" class="hidden text-center"><div class="loader mx-auto mb-4"></div><p class="text-lg">Modell wird geladen...</p></div>
+        <div id="start-controls">
+            <h2 class="text-2xl font-bold mb-4">Anleitung</h2>
+            <p class="mb-2"><span class="font-bold text-blue-400">Rechte Hand</span> (links/rechts) steuert <span class="font-bold">Tonhöhe</span>.</p>
+            <p class="mb-6"><span class="font-bold text-purple-400">Linke Hand</span> (hoch/runter) steuert <span class="font-bold">Lautstärke</span>.</p>
+            <button id="start-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-xl shadow-lg">Starte Theremin</button>
+        </div>
+         <div id="error-message" class="hidden text-red-400 text-center p-4"><h3 class="font-bold text-xl">Fehler</h3><p>Konnte nicht auf die Webcam zugreifen.</p></div>
+    </div>
+
+    <script type="module">
+        const videoElement = document.getElementById('input_video');
+        const startButton = document.getElementById('start-button');
+        const overlay = document.getElementById('overlay');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const startControls = document.getElementById('start-controls');
+        const errorMessage = document.getElementById('error-message');
+        const thereminContainer = document.getElementById('theremin-container');
+        const addThereminButton = document.getElementById('add-theremin-button');
+        const noteDisplay = document.getElementById('note-display');
+        const hzDisplay = document.getElementById('hz-display');
+
+        let isAudioReady = false;
+        let allTheremins = [];
+        const instruments = [
+            { name: 'sine', type: 'Oscillator', options: { type: 'sine' } }, { name: 'square', type: 'Oscillator', options: { type: 'square' } }, { name: 'sawtooth', type: 'Oscillator', options: { type: 'sawtooth' } }, { name: 'triangle', type: 'Oscillator', options: { type: 'triangle' } }, { name: 'Omni', type: 'FMOscillator', options: { harmonicity: 3, modulationIndex: 10, type: 'sine', modulationType: 'square' } }, { name: 'Vibes', type: 'FMOscillator', options: { harmonicity: 5, modulationIndex: 10, type: 'sine', modulationType: 'sine' } }
+        ];
+        const colorPalettes = [
+            { p: 'blue-600', s: 'purple-600' }, { p: 'green-500', s: 'yellow-500' }, { p: 'red-500', s: 'orange-500' }, { p: 'teal-500', s: 'cyan-500' }
+        ];
+        const cMajorScale = [0, 2, 4, 5, 7, 9, 11];
+
+        function createThereminInstance(id, color) {
+            const thereminHTML = `
+                <div class="relative w-full max-w-3xl flex items-center justify-center mx-auto">
+                    <div id="theremin-body-${id}" class="relative w-full h-56 bg-gray-800 rounded-2xl shadow-xl flex items-center p-4 gap-4 border border-gray-700">
+                        <div class="flex-1 h-full flex items-end gap-4">
+                            <div class="h-full w-12 bg-black/50 rounded-lg flex flex-col-reverse p-1.5"><div id="volume-bar-${id}" class="volume-bar w-full bg-gradient-to-t from-${color.s} to-${color.s.replace('600', '400').replace('500', '300')} rounded-md"></div></div>
+                            <div class="flex-1 h-12 bg-black/50 rounded-lg p-1.5 self-center"><div id="pitch-bar-${id}" class="pitch-bar h-full bg-gradient-to-r from-${color.p} to-${color.p.replace('600', '400').replace('500', '300')} rounded-md"></div></div>
+                        </div>
+                        <div class="flex flex-col justify-between h-full w-56 py-2">
+                             <div class="text-center">
+                                <div id="sound-knob-${id}" class="rotary-knob mx-auto"><div id="knob-indicator-sound-${id}" class="knob-indicator bg-${color.p}"></div></div>
+                                <p id="sound-type-display-${id}" class="text-xs font-mono font-bold text-${color.p} mt-1">sine</p>
+                            </div>
+                            <div class="grid grid-cols-3 gap-y-2">
+                                 <div class="text-center"><div id="mute-switch-${id}" class="switch mx-auto"><div id="mute-switch-handle-${id}" class="switch-handle"></div></div><p class="text-xs text-gray-400 mt-1">Mute</p></div>
+                                 <div class="text-center"><div id="glide-switch-${id}" class="switch mx-auto"><div id="glide-switch-handle-${id}" class="switch-handle"></div></div><p class="text-xs text-gray-400 mt-1">Glide</p></div>
+                                 <div class="text-center"><div id="harmony-switch-${id}" class="switch mx-auto"><div id="harmony-switch-handle-${id}" class="switch-handle"></div></div><p class="text-xs text-gray-400 mt-1">Harmony</p></div>
+                                 <div class="text-center"><div id="arp-switch-${id}" class="switch mx-auto"><div id="arp-switch-handle-${id}" class="switch-handle"></div></div><p class="text-xs text-gray-400 mt-1">Arp</p></div>
+                                 <div class="text-center col-start-2"><div id="hold-switch-${id}" class="switch mx-auto"><div id="hold-switch-handle-${id}" class="switch-handle"></div></div><p class="text-xs text-gray-400 mt-1">Hold</p></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pitch-antenna ml-4"></div>
+                </div>`;
+            thereminContainer.insertAdjacentHTML('beforeend', thereminHTML);
+
+            const instance = {
+                id, synth: null, volume: null, isMuted: false, isGlideMode: true, isHoldMode: false, isHarmonyMode: false, isArpMode: false,
+                lastUpdateTime: 0, currentInstrumentIndex: 0, currentRootNote: null, arp: null,
+                dom: {
+                    soundKnob: document.getElementById(`sound-knob-${id}`), soundTypeDisplay: document.getElementById(`sound-type-display-${id}`),
+                    volumeBar: document.getElementById(`volume-bar-${id}`), pitchBar: document.getElementById(`pitch-bar-${id}`),
+                    muteSwitch: document.getElementById(`mute-switch-${id}`), muteSwitchHandle: document.getElementById(`mute-switch-handle-${id}`),
+                    glideSwitch: document.getElementById(`glide-switch-${id}`), glideSwitchHandle: document.getElementById(`glide-switch-handle-${id}`),
+                    harmonySwitch: document.getElementById(`harmony-switch-${id}`), harmonySwitchHandle: document.getElementById(`harmony-switch-handle-${id}`),
+                    arpSwitch: document.getElementById(`arp-switch-${id}`), arpSwitchHandle: document.getElementById(`arp-switch-handle-${id}`),
+                    holdSwitch: document.getElementById(`hold-switch-${id}`), holdSwitchHandle: document.getElementById(`hold-switch-handle-${id}`),
+                },
+                
+                createSynth() { this.synth = new Tone[instruments[this.currentInstrumentIndex].type](instruments[this.currentInstrumentIndex].options); this.synth.connect(this.volume).start(); },
+                setup() { this.volume = new Tone.Volume(-Infinity).toDestination(); this.createSynth(); this.addListeners(); this.updateAllUI(); },
+                addListeners() {
+                    this.dom.soundKnob.addEventListener('click', () => { this.synth.dispose(); this.currentInstrumentIndex = (this.currentInstrumentIndex + 1) % instruments.length; this.createSynth(); this.updateAllUI(); });
+                    this.dom.muteSwitch.addEventListener('click', () => { this.isMuted = !this.isMuted; this.updateAllUI(); });
+                    this.dom.glideSwitch.addEventListener('click', () => { this.isGlideMode = !this.isGlideMode; this.updateAllUI(); });
+                    this.dom.harmonySwitch.addEventListener('click', () => { this.isHarmonyMode = !this.isHarmonyMode; this.updateAllUI(); });
+                    this.dom.arpSwitch.addEventListener('click', () => { this.isArpMode = !this.isArpMode; this.handleArpState(); this.updateAllUI(); });
+                    this.dom.holdSwitch.addEventListener('click', () => { this.isHoldMode = !this.isHoldMode; this.updateAllUI(); });
+                },
+                updateAllUI() {
+                    this.dom.soundTypeDisplay.textContent = instruments[this.currentInstrumentIndex].name;
+                    this.dom.soundKnob.style.transform = `rotate(${this.currentInstrumentIndex * (360 / instruments.length)}deg)`;
+                    this.updateSwitchUI(this.dom.muteSwitch, this.dom.muteSwitchHandle, this.isMuted);
+                    this.updateSwitchUI(this.dom.glideSwitch, this.dom.glideSwitchHandle, this.isGlideMode);
+                    this.updateSwitchUI(this.dom.harmonySwitch, this.dom.harmonySwitchHandle, this.isHarmonyMode);
+                    this.updateSwitchUI(this.dom.arpSwitch, this.dom.arpSwitchHandle, this.isArpMode);
+                    this.updateSwitchUI(this.dom.holdSwitch, this.dom.holdSwitchHandle, this.isHoldMode);
+                },
+                updateSwitchUI(switchEl, handleEl, isActive) {
+                    if (isActive) { switchEl.style.backgroundColor = '#2563eb'; handleEl.style.transform = 'translateX(22px)'; } 
+                    else { switchEl.style.backgroundColor = '#374151'; handleEl.style.transform = 'translateX(0px)'; }
+                },
+                handleArpState() {
+                    if (this.isArpMode) {
+                        if (this.arp) this.arp.dispose();
+                        this.arp = new Tone.Pattern((time, note) => {
+                            this.synth.frequency.setValueAtTime(note, time);
+                        }, [], "down");
+                        this.arp.interval = "8n";
+                        this.arp.start(0);
+                    } else {
+                        if (this.arp) { this.arp.stop(0).dispose(); }
+                        this.arp = null;
+                    }
+                },
+                getClosestInScale(midiNote) {
+                    const octave = Math.floor((midiNote - 36) / 12);
+                    const noteInOctave = Math.round(midiNote) % 12;
+                    const closestTone = cMajorScale.reduce((prev, curr) => (Math.abs(curr - noteInOctave) < Math.abs(prev - noteInOctave) ? curr : prev));
+                    return (octave + 3) * 12 + closestTone;
+                },
+                updateSound(rightHandX, leftHandY) {
+                    const now = Date.now();
+                    if (this.isHoldMode && (now - this.lastUpdateTime < 600)) { return; }
+                    this.lastUpdateTime = now;
+
+                    let midiNote = 48; // Default note
+                    if (rightHandX !== null) {
+                        midiNote = 36 + ((1 - rightHandX) * 60);
+                        this.dom.pitchBar.style.width = `${(1 - rightHandX) * 100}%`;
+                    } else { this.dom.pitchBar.style.width = '0%'; }
+                    
+                    if (this.isHarmonyMode) {
+                        midiNote = this.getClosestInScale(midiNote);
+                    }
+
+                    const rootNoteObj = Tone.Frequency(midiNote, "midi");
+                    
+                    if (this.isArpMode && this.arp) {
+                        const rootNoteName = rootNoteObj.toNote();
+                        if (this.currentRootNote !== rootNoteName) {
+                            this.currentRootNote = rootNoteName;
+                            const octave = parseInt(rootNoteName.slice(-1));
+                            const note = rootNoteName.slice(0, -1);
+                            this.arp.values = [`${note}${octave}`, `${note}${octave-1}`, `${note}${octave-2}`];
+                        }
+                    } else {
+                        if (this.isGlideMode) { 
+                            this.synth.frequency.rampTo(rootNoteObj.toFrequency(), 0.05); 
+                        } else { 
+                            const finalMidi = this.isHarmonyMode ? midiNote : Math.round(midiNote);
+                            this.synth.frequency.value = Tone.Frequency(finalMidi, "midi").toFrequency(); 
+                        }
+                    }
+
+                    if (leftHandY !== null && !this.isMuted) {
+                        const vol = (1 - leftHandY) * 40 - 40;
+                        this.volume.volume.rampTo(vol, 0.1);
+                        this.dom.volumeBar.style.height = `${(1 - leftHandY) * 100}%`;
+                    } else {
+                        this.volume.volume.rampTo(-Infinity, 0.5);
+                        this.dom.volumeBar.style.height = '0%';
+                    }
+                }
+            };
+            instance.setup();
+            return instance;
+        }
+
+        function onResults(results) {
+            if (!isAudioReady) return;
+            let rightHandX = null, leftHandY = null;
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    if (results.multiHandedness[i].label === 'Right') rightHandX = results.multiHandLandmarks[i][8].x;
+                    else leftHandY = results.multiHandLandmarks[i][8].y;
+                }
+            }
+            allTheremins.forEach(instance => instance.updateSound(rightHandX, leftHandY));
+            if(allTheremins[0] && allTheremins[0].synth.frequency){
+                 noteDisplay.textContent = Tone.Frequency(allTheremins[0].synth.frequency.value).toNote();
+                 hzDisplay.textContent = `${Math.round(allTheremins[0].synth.frequency.value)} Hz`;
+            } else { noteDisplay.textContent = '-'; hzDisplay.textContent = '0 Hz'; }
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+        hands.onResults(onResults);
+        const camera = new Camera(videoElement, { onFrame: () => {}, width: 1280, height: 720 });
+        async function processFrame() { if (!videoElement.paused && !videoElement.ended) await hands.send({ image: videoElement }); requestAnimationFrame(processFrame); }
+        addThereminButton.addEventListener('click', () => { if (!isAudioReady) return; const newId = allTheremins.length; const color = colorPalettes[newId % colorPalettes.length]; allTheremins.push(createThereminInstance(newId, color)); });
+        startButton.addEventListener('click', async () => {
+            startControls.classList.add('hidden'); loadingIndicator.classList.remove('hidden');
+            try {
+                await Tone.start();
+                Tone.Transport.start();
+                isAudioReady = true;
+                addThereminButton.click();
+                await camera.start(); processFrame();
+                overlay.classList.add('hidden');
+            } catch(e) { console.error("Fehler:", e); loadingIndicator.classList.add('hidden'); errorMessage.classList.remove('hidden'); }
+        });
+    </script>
+</body>
+</html>
