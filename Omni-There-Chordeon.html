@@ -43,7 +43,7 @@
 
     <div class="w-full max-w-4xl mx-auto text-center mb-4">
         <h1 class="text-4xl md:text-5xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">Omni-There-Chordeon</h1>
-        <p class="text-gray-400">Theremin + Omnichord + Accordion = Omni-There-Chordeon</p>
+        <p class="text-gray-400">Omnichord + Theremin + Accordion = Omni-There-Chordeon</p>
     </div>
 
     <div id="theremin-container" class="w-full space-y-6"></div>
@@ -196,7 +196,7 @@
                     if (this.isOmniMode) {
                         const chordHand = this.areHandsSwapped ? 'Rechte Hand' : 'Linke Hand';
                         const strumHand = this.areHandsSwapped ? 'Linke Hand' : 'Rechte Hand';
-                        text = `<b>Omni-Modus:</b> ${chordHand} wählt Akkord (hoch/runter). ${strumHand} spielt Harfe (links/rechts).`;
+                        text = `<b>Omni-Modus:</b> ${chordHand} wählt Akkord (hoch/runter). ${strumHand} spielt Harfe - zupfen bidde! (links/rechts).`;
                     } else if (this.isAccMode) {
                         text = '<b>Akkordeon-Modus:</b> Jede Hand spielt einen Ton. Hoch/runter ändert Tonhöhe, links/rechts die Lautstärke.';
                     } else if (this.isArpMode) {
